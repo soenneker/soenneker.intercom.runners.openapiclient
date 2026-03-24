@@ -4,7 +4,6 @@ using Soenneker.Extensions.String;
 using Soenneker.Extensions.ValueTask;
 using Soenneker.Git.Util.Abstract;
 using Soenneker.Intercom.Runners.OpenApiClient.Utils.Abstract;
-using Soenneker.OpenApi.Fixer;
 using Soenneker.OpenApi.Fixer.Abstract;
 using Soenneker.Utils.Directory.Abstract;
 using Soenneker.Utils.Dotnet.Abstract;
@@ -68,6 +67,9 @@ public sealed class FileOperationsUtil : IFileOperationsUtil
 
         string targetJsonPath = Path.Combine(gitDirectory, "openapi.json");
 
+        if (string.IsNullOrWhiteSpace(filePath))
+            throw new InvalidOperationException("OpenAPI document download returned an empty file path.");
+
         await _yamlUtil.SaveAsJson(filePath, targetJsonPath, true, cancellationToken);
 
         string targetFixedPath = Path.Combine(gitDirectory, "fixed.json");
@@ -78,8 +80,6 @@ public sealed class FileOperationsUtil : IFileOperationsUtil
 
         string srcDirectory = Path.Combine(gitDirectory, "src", Constants.Library);
 
-        await DeleteAllExceptCsproj(srcDirectory, cancellationToken);
-
         await _processUtil.Start("kiota", gitDirectory,
                               $"kiota generate -l CSharp -d \"{targetFixedPath}\" -o src/{Constants.Library} -c IntercomOpenApiClient -n {Constants.Library}",
                               waitForExit: true, cancellationToken: cancellationToken)
@@ -88,6 +88,7 @@ public sealed class FileOperationsUtil : IFileOperationsUtil
         await BuildAndPush(gitDirectory, cancellationToken)
             .NoSync();
     }
+
 
     public async ValueTask DeleteAllExceptCsproj(string directoryPath, CancellationToken cancellationToken = default)
     {
