@@ -1,21 +1,24 @@
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Soenneker.Extensions.String;
+using Soenneker.Extensions.ValueTask;
 using Soenneker.Git.Util.Abstract;
 using Soenneker.Intercom.Runners.OpenApiClient.Utils.Abstract;
+using Soenneker.OpenApi.Fixer;
+using Soenneker.OpenApi.Fixer.Abstract;
+using Soenneker.Utils.Directory.Abstract;
 using Soenneker.Utils.Dotnet.Abstract;
 using Soenneker.Utils.Environment;
+using Soenneker.Utils.File.Abstract;
+using Soenneker.Utils.File.Download.Abstract;
 using Soenneker.Utils.Process.Abstract;
+using Soenneker.Utils.Yaml.Abstract;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Soenneker.Extensions.ValueTask;
-using Soenneker.Utils.Directory.Abstract;
-using Soenneker.Utils.File.Abstract;
-using Soenneker.Utils.File.Download.Abstract;
-using System.Collections.Generic;
 
 namespace Soenneker.Intercom.Runners.OpenApiClient.Utils;
 
@@ -30,9 +33,12 @@ public sealed class FileOperationsUtil : IFileOperationsUtil
     private readonly IFileDownloadUtil _fileDownloadUtil;
     private readonly IFileUtil _fileUtil;
     private readonly IDirectoryUtil _directoryUtil;
+    private readonly IOpenApiFixer _openApiFixer;
+    private readonly IYamlUtil _yamlUtil;
 
-    public FileOperationsUtil(ILogger<FileOperationsUtil> logger, IConfiguration configuration, IGitUtil gitUtil, IDotnetUtil dotnetUtil, IProcessUtil processUtil, 
-        IFileDownloadUtil fileDownloadUtil, IFileUtil fileUtil, IDirectoryUtil directoryUtil)
+    public FileOperationsUtil(ILogger<FileOperationsUtil> logger, IConfiguration configuration, IGitUtil gitUtil, IDotnetUtil dotnetUtil,
+        IProcessUtil processUtil, IFileDownloadUtil fileDownloadUtil, IFileUtil fileUtil, IDirectoryUtil directoryUtil, IOpenApiFixer openApiFixer,
+        IYamlUtil yamlUtil)
     {
         _logger = logger;
         _configuration = configuration;
@@ -42,20 +48,31 @@ public sealed class FileOperationsUtil : IFileOperationsUtil
         _fileDownloadUtil = fileDownloadUtil;
         _fileUtil = fileUtil;
         _directoryUtil = directoryUtil;
+        _openApiFixer = openApiFixer;
+        _yamlUtil = yamlUtil;
     }
 
     public async ValueTask Process(CancellationToken cancellationToken = default)
     {
-        string gitDirectory = await _gitUtil.CloneToTempDirectory($"https://github.com/soenneker/{Constants.Library.ToLowerInvariantFast()}", cancellationToken: cancellationToken);
+        string gitDirectory = await _gitUtil.CloneToTempDirectory($"https://github.com/soenneker/{Constants.Library.ToLowerInvariantFast()}",
+            cancellationToken: cancellationToken);
 
         string targetFilePath = Path.Combine(gitDirectory, "openapi.yaml");
 
         await _fileUtil.DeleteIfExists(targetFilePath, cancellationToken: cancellationToken);
 
-        string openApiDocumentUrl = _configuration["Intercom:ClientGenerationUrl"] ?? "https://raw.githubusercontent.com/intercom/Intercom-OpenAPI/refs/heads/main/descriptions/0/api.intercom.io.yaml";
+        string openApiDocumentUrl = _configuration["Intercom:ClientGenerationUrl"] ??
+                                    "https://raw.githubusercontent.com/intercom/Intercom-OpenAPI/refs/heads/main/descriptions/0/api.intercom.io.yaml";
 
-        string? filePath = await _fileDownloadUtil.Download(openApiDocumentUrl,
-            targetFilePath, fileExtension: ".yaml", cancellationToken: cancellationToken);
+        string? filePath = await _fileDownloadUtil.Download(openApiDocumentUrl, targetFilePath, fileExtension: ".yaml", cancellationToken: cancellationToken);
+
+        string targetJsonPath = Path.Combine(gitDirectory, "openapi.json");
+
+        await _yamlUtil.SaveAsJson(filePath, targetJsonPath, true, cancellationToken);
+
+        string targetFixedPath = Path.Combine(gitDirectory, "fixed.json");
+
+        await _openApiFixer.Fix(targetJsonPath, targetFixedPath, cancellationToken);
 
         await _processUtil.Start("dotnet", null, "tool update --global Microsoft.OpenApi.Kiota", waitForExit: true, cancellationToken: cancellationToken);
 
@@ -63,10 +80,13 @@ public sealed class FileOperationsUtil : IFileOperationsUtil
 
         await DeleteAllExceptCsproj(srcDirectory, cancellationToken);
 
-        await _processUtil.Start("kiota", gitDirectory, $"kiota generate -l CSharp -d \"{filePath}\" -o src/{Constants.Library} -c IntercomOpenApiClient -n {Constants.Library}",
-            waitForExit: true, cancellationToken: cancellationToken).NoSync();
+        await _processUtil.Start("kiota", gitDirectory,
+                              $"kiota generate -l CSharp -d \"{targetFixedPath}\" -o src/{Constants.Library} -c IntercomOpenApiClient -n {Constants.Library}",
+                              waitForExit: true, cancellationToken: cancellationToken)
+                          .NoSync();
 
-        await BuildAndPush(gitDirectory, cancellationToken).NoSync();
+        await BuildAndPush(gitDirectory, cancellationToken)
+            .NoSync();
     }
 
     public async ValueTask DeleteAllExceptCsproj(string directoryPath, CancellationToken cancellationToken = default)
