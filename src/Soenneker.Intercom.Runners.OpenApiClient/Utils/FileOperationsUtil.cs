@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Soenneker.Extensions.String;
 using Soenneker.Extensions.ValueTask;
+using Soenneker.Kiota.Util.Abstract;
 using Soenneker.Git.Util.Abstract;
 using Soenneker.Intercom.Runners.OpenApiClient.Utils.Abstract;
 using Soenneker.OpenApi.Fixer.Abstract;
@@ -29,6 +30,7 @@ public sealed class FileOperationsUtil : IFileOperationsUtil
     private readonly IGitUtil _gitUtil;
     private readonly IDotnetUtil _dotnetUtil;
     private readonly IProcessUtil _processUtil;
+    private readonly IKiotaUtil _kiotaUtil;
     private readonly IFileDownloadUtil _fileDownloadUtil;
     private readonly IFileUtil _fileUtil;
     private readonly IDirectoryUtil _directoryUtil;
@@ -37,13 +39,14 @@ public sealed class FileOperationsUtil : IFileOperationsUtil
 
     public FileOperationsUtil(ILogger<FileOperationsUtil> logger, IConfiguration configuration, IGitUtil gitUtil, IDotnetUtil dotnetUtil,
         IProcessUtil processUtil, IFileDownloadUtil fileDownloadUtil, IFileUtil fileUtil, IDirectoryUtil directoryUtil, IOpenApiFixer openApiFixer,
-        IYamlUtil yamlUtil)
+        IYamlUtil yamlUtil, IKiotaUtil kiotaUtil)
     {
         _logger = logger;
         _configuration = configuration;
         _gitUtil = gitUtil;
         _dotnetUtil = dotnetUtil;
         _processUtil = processUtil;
+        _kiotaUtil = kiotaUtil;
         _fileDownloadUtil = fileDownloadUtil;
         _fileUtil = fileUtil;
         _directoryUtil = directoryUtil;
@@ -76,14 +79,11 @@ public sealed class FileOperationsUtil : IFileOperationsUtil
 
         await _openApiFixer.Fix(targetJsonPath, targetFixedPath, cancellationToken);
 
-        await _processUtil.Start("dotnet", null, "tool update --global Microsoft.OpenApi.Kiota", waitForExit: true, cancellationToken: cancellationToken);
+        await _kiotaUtil.EnsureInstalled(cancellationToken);
 
         string srcDirectory = Path.Combine(gitDirectory, "src", Constants.Library);
 
-        await _processUtil.Start("kiota", gitDirectory,
-                              $"kiota generate -l CSharp -d \"{targetFixedPath}\" -o src/{Constants.Library} -c IntercomOpenApiClient -n {Constants.Library}",
-                              waitForExit: true, cancellationToken: cancellationToken)
-                          .NoSync();
+        await _kiotaUtil.Generate(targetFixedPath, "IntercomOpenApiClient", Constants.Library, gitDirectory, cancellationToken).NoSync();
 
         await BuildAndPush(gitDirectory, cancellationToken)
             .NoSync();
