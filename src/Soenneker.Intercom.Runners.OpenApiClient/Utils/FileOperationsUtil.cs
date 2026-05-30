@@ -60,8 +60,10 @@ public sealed class FileOperationsUtil : IFileOperationsUtil
             cancellationToken: cancellationToken);
 
         string targetFilePath = Path.Combine(gitDirectory, "openapi.yaml");
+        string jsonFilePath = Path.Combine(gitDirectory, "openapi.json");
 
         await _fileUtil.DeleteIfExists(targetFilePath, cancellationToken: cancellationToken);
+        await _fileUtil.DeleteIfExists(jsonFilePath, cancellationToken: cancellationToken);
 
         string openApiDocumentUrl = _configuration["Intercom:ClientGenerationUrl"] ??
                                     "https://raw.githubusercontent.com/intercom/Intercom-OpenAPI/refs/heads/main/descriptions/0/api.intercom.io.yaml";
